@@ -1,0 +1,636 @@
+---
+title: 'ANLY 560: Data Viz and EDA'
+author: "Merykokeb Belay"
+date: "2/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(tseries)
+library(forecast)
+library(astsa) 
+library(xts)
+library(fpp2)
+library(fma)
+library(lubridate)
+library(tidyverse)
+library(TSstudio)
+library(quantmod)
+library(tidyquant)
+library(plotly)
+library(ggplot2)
+```
+
+
+
+```{r}
+#import data from COVID tracking project; 
+county_covid<-read.csv('covid-county-by-race.csv')
+county_covid
+```
+
+# DATA VIZ AND EDA
+```{r}
+#plot counties with the top-5 covid-19 deaths 
+county_covid_plot<-county_covid%>%
+  arrange(desc(deathsPer100k))%>%
+  select(state, countyName, deathsPer100k)%>%
+  mutate(location=paste(countyName,',',state))%>%
+  slice(1:5)%>%
+  ggplot(aes(deathsPer100k, reorder(location, deathsPer100k)))+geom_bar(stat='identity', width = 0.6, fill='#fc8d62', alpha=0.6)+theme_minimal()+labs(y="", x='Deaths per 100k', title='U.S. COVID-19 Deaths per 100k: Top Five Counties', subtitle = 'The graph below depicts the top five U.S.counties with the highest COVID-19 \ndeaths. At the time of data collection, Galax city, Virginia had the highest\nnumber of deaths recorded.', caption='Data source: The COVID-19 Tracking Project')+theme(plot.title = element_text(size = 15, margin = margin(b = 10), hjust=0), plot.subtitle = element_text(size = 10, color = "darkslategrey", margin = margin(b = 25), hjust=0), plot.caption = element_text(size=6))
+county_covid_plot
+#ggsave('county_covid_plot.jpeg')
+```
+
+The plot above depicts counties with the highest covid-19 deaths, as recroded by the COVID-19 tracking project. These counties are found in Virginia, South Dakota, Georgia, and Texas.
+
+Let's look at the state of hospitals in these states using data provided by Health and Human Services. 
+
+
+```{r}
+df<-read_csv('COVID-19_Reported_Patient_Impact_and_Hospital_Capacity_by_State_Timeseries.csv')
+df
+```
+
+```{r}
+Sys.setenv("plotly_username"="mbelay")
+Sys.setenv("plotly_api_key"="ETtjOXrmELd3uq5bhkfY")
+
+```
+
+
+```{r}
+plotly_df<-df%>%
+  mutate(critical_staffing_total= critical_staffing_shortage_today_yes+critical_staffing_shortage_today_no+critical_staffing_shortage_today_not_reported)%>%
+  select(state, date, critical_staffing_shortage_today_yes, critical_staffing_shortage_today_no, critical_staffing_shortage_today_not_reported, critical_staffing_total)%>%
+  mutate(perc_critical_staffing_shortage_yes=(critical_staffing_shortage_today_yes/critical_staffing_total)*100)%>%
+  filter(state=='VA'| state=='TX'| state=='SD'| state=='GA')%>%
+  arrange(date)
+
+fig1<-plot_ly(plotly_df%>%filter(state=='VA'), x=~date, y=~perc_critical_staffing_shortage_yes, type='scatter', mode='lines', name = 'VA')#%>%layout(title='Hospital Critical Staff Shortage: January 2020 - February 2022', yaxis=list(title='Percent of hospital with reported shorages'), xaxis=list(title=''))
+fig2<-plot_ly(plotly_df%>%filter(state=='GA'), x=~date, y=~perc_critical_staffing_shortage_yes, type='scatter', mode='lines', name='GA')#%>%layout(title='Hospital Critical Staff Shortage: January 2020 - February 2022', yaxis=list(title='Percent of hospital with reported shorages'), xaxis=list(title=''))
+fig3<-plot_ly(plotly_df%>%filter(state=='SD'), x=~date, y=~perc_critical_staffing_shortage_yes, type='scatter', mode='lines', name='SD')#%>%layout(title='Hospital Critical Staff Shortage: January 2020 - February 2022', yaxis=list(title='Percent of hospital with reported shorages'), xaxis=list(title=''))
+fig4<-plot_ly(plotly_df%>%filter(state=='TX'), x=~date, y=~perc_critical_staffing_shortage_yes, type='scatter', mode='lines', name='TX')
+fig<-subplot(fig1, fig2, fig3, fig4, nrows=4, shareX = TRUE, titleY =FALSE)#%>%layout(title='Hospital Critical Staff Shortage: January 2020 - February 2022',xaxis=list(title=''))
+
+m <- list(
+  l = 100,
+  r = 25,
+  b = 25,
+  t = 125
+  #pad = 4
+)
+fig <- fig %>% layout(title=list(text='Hospital Critical Staff Shortage: January 2020 - February 2022'),
+                      
+                      #width = 500, height = 500,
+                      margin = m)
+
+  
+# your axis title
+fig <- fig %>% layout(annotations = list(
+                list(x = -0.15 , y = 0.5, text = "Percent of hospitals reporting shortages",
+                     
+                     textangle = 270,
+                     showarrow = F, xref='paper', yref='paper', size=48)
+                
+                ))
+fig
+api_create(fig, filename = 'us_hospital_shortages')
+```
+
+
+
+```{r}
+plotly_df<-df%>%
+  select(state, date, percent_of_inpatients_with_covid)%>%
+  mutate(perc_of_inpatients_with_covid= percent_of_inpatients_with_covid*100)%>%
+  filter(state=='VA'| state=='TX'| state=='SD'| state=='GA')%>%
+  arrange(date)
+
+fig<-plot_ly(plotly_df, x=~date, y=~percent_of_inpatients_with_covid, group_by=~state,color = ~state, type='scatter', mode='lines')
+  
+fig
+```
+
+
+
+```{r}
+#plot inpatients with covid in texas
+
+tx_covid<-df%>%
+  select(state, date, percent_of_inpatients_with_covid)%>%
+  mutate(perc_of_inpatients_with_covid= (percent_of_inpatients_with_covid)*100)%>%
+  filter(state=='TX')%>%
+  arrange(date)%>%
+  ggplot(aes(x=date, y=perc_of_inpatients_with_covid))+geom_line(color='#fc8d62')+theme_minimal()+labs(y='Percent of Inpatients with COVID-19', x='', title='Share of Inpatients with COVID-19 in Texas: Jan 2020 - Feb 2022', subtitle = "The line plot below depicts the share of inpatients with COVID-19 across hospitals in Texas' \nhealthcare system. Although there is an initial trend to highlight the immediate rise in inpatient cases \nfollowing the start of the pandemic, it tends to be less pronounced over time")+theme(plot.title = element_text(size = 15, margin = margin(b = 10), hjust=0), plot.subtitle = element_text(size = 10, color = "darkslategrey", margin = margin(b = 25), hjust=0), plot.caption = element_text(size=6))+ylim(c(0,40))
+#ggsave('tx_covid_plot.jpeg')
+tx_covid
+
+```
+
+
+
+```{r}
+#plot inpatients with covid in texas
+
+tx_covid<-df%>%
+  select(state, date, deaths_covid_coverage)%>%
+  filter(state=='VA'| state=='TX'| state=='SD'| state=='GA')%>%
+  arrange(date)%>%
+  ggplot(aes(x=date, y=deaths_covid_coverage, group=state)) + 
+  geom_line(aes(color=state))+theme_minimal()+labs(y='Number of hospitals reporting COVID-19 deaths', x='', title='Hospitals reporting COVID-19 deaths: Jan 2020 - Feb 2022', subtitle = "The line plot below depicts the number of hospital facilities that reported covid deaths\n from January 2020 to February 2022. Compared to Georgia, Sout Dakota, and Virigina,\n hospitals in Texas were reporting far more deaths.")+theme(plot.title = element_text(size = 15, margin = margin(b = 10), hjust=0), plot.subtitle = element_text(size = 10, color = "darkslategrey", margin = margin(b = 25), hjust=0), plot.caption = element_text(size=6))
+ggsave('tx_covid_plot.jpeg')
+tx_covid
+
+```
+
+
+### Examine uninsured rates across these states 
+
+```{r}
+
+uninsured<-read_csv('uninsured.csv')
+uninsured
+```
+
+```{r}
+uninsured_plot<-uninsured%>%
+  pivot_longer(cols = c('2008', '2009', '2010', '2011', '2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019'))%>%
+  mutate(value=value*100)%>%
+  ggplot(aes(x=name, y=value, group=Location)) +
+  geom_line(aes(color=Location))+theme_minimal()+labs(y='Percent of Uninsured Population', x='', title='Health Insurance Coverage of Total Population: 2008 - 2019', subtitle = "The line plot below depicts the share of the total population that is uninsured in Georgai, \nTexas, Virginia, and South Dakota.")+theme(plot.title = element_text(size = 15, margin = margin(b = 10), hjust=0), plot.subtitle = element_text(size = 10, color = "darkslategrey", margin = margin(b = 25), hjust=0), plot.caption = element_text(size=6))+ylim(c(0, 25))
+#ggsave('uninsured_plot.jpeg')
+```
+
+
+
+
+
+```{r}
+#create a univariate time series dataset
+tx_covid_inpatient<-df%>%
+  select(state, date, percent_of_inpatients_with_covid)%>%
+  filter(state=='TX')%>%
+  mutate(perc_of_inpatients_with_covid= percent_of_inpatients_with_covid*100)%>%
+  select(date, p=perc_of_inpatients_with_covid)
+tx_covid_inpatient<-tx_covid_inpatient[order(tx_covid_inpatient$date),]
+td=tx_covid_inpatient$p
+str(td)
+#turn into a time series format
+td.ts<-ts(td, start = c(2020, 1, 1),frequency = 7)
+#plot series
+plot(td.ts)
+#decompose series
+plot(decompose(td.ts))
+#plot autocorrelation 
+plot(acf(diff(td.ts)))
+str(td.ts)
+#display lag plot
+gglagplot(td.ts,lags=12, do.lines = FALSE)
+#ggsave('lags.jpeg')
+
+```
+
+
+```{r}
+#select multiplicative decomposition 
+plot(decompose(td.ts, "multiplicative"))
+
+```
+
+
+```{r}
+#plot acf and pacf
+acf(td.ts)
+pacf(td.ts)
+
+```
+
+```{r}
+#stationarity
+adf.test(td.ts)
+acf(diff(diff(td.ts)))
+pacf(diff(td.ts), main='Partial Autocorrelation Function Plot (First Difference)')
+adf.test(diff(td.ts))
+```
+
+
+```{r}
+#moving average smoothing 
+autoplot(td.ts)+autolayer(ma(td.ts, order=7), series = 'MA-7')+autolayer(ma(td.ts, order=29), series='MA-29')+autolayer(ma(td.ts, order=89), series = 'MA-89')+autolayer(ma(td.ts, order=179), series='MA-179')+theme_minimal()+ylab('Share of Hospitals Reporting Shortages')+labs(title = 'Texas Reported Hospital Critical Staff Shortages')+xlab('')
+
+```
+
+
+
+#ARMA/ARIMA
+
+```{r}
+
+model_smry<-data.frame()
+#begin for loop to try different combinations
+for (p in 1:3){
+  for (q in 1:4){
+    for (d in 1:2){
+      fit<-arima(td.ts, order=c(p,d,q))
+      acc<-accuracy(fit)
+      acc_ext<-data.frame(p,d,q, AIC=AIC(fit), BIC=BIC(fit))
+      model_smry<-rbind(model_smry, acc_ext)
+    }
+  }
+}
+model_smry%>% 
+  filter(d==1)%>%
+  mutate(summ=p+d+q)%>%
+  filter(summ<=8)%>%
+  arrange(AIC)
+
+
+
+```
+
+
+
+```{r}
+
+model_train<-Arima(td.ts, order=c(1,1,1), include.drift = TRUE)
+summary(model_train)
+```
+
+```{r}
+
+autoplot(forecast(model_train,100), PI=F, seris='dfd')+geom_line()+ylab('Hospital Critical Staff Shortages (Texas)')+ xlab('')
+
+```
+
+
+```{r}
+
+#mean
+f1 <- meanf(td.ts, h=100)
+#naive
+f2 <- naive(td.ts, h=100)
+
+#Drift
+f3 <- rwf(td.ts, h=100, drift = TRUE)
+
+
+#seasonal naive
+f4<-snaive(td.ts, h=100)
+
+
+```
+
+```{R}
+autoplot(td.ts)+autolayer(pred$mean, PI=FALSE, series='ARIMA(1,1,1)') + autolayer(meanf(td.ts, h=100),
+series="Mean", PI=FALSE) + autolayer(naive(td.ts, h=100),
+series="Naïve", PI=FALSE) + autolayer(rwf(td.ts, drift=TRUE, h=100),
+series="Drift", PI=FALSE) + autolayer(snaive(td.ts, h=100), PI=FALSE, series='Seasonal Naïve')+
+ggtitle("Texas Hospital Critical Staff Shortages\n(daily ending 8 Feb 2022)") + xlab("") + ylab("Hospital Critical Staff Shortages (Texas)") + guides(colour=guide_legend(title="Forecast"))
+
+```
+
+```{r}
+
+pred=forecast(model_train,100)
+autoplot(pred$mean)
+
+```
+
+
+### Seasonal ARIMA 
+
+```{r}
+
+#seasonal differencing 
+td.ts %>%ggtsdisplay()
+td.ts %>%diff()%>%ggtsdisplay()
+td.ts %>% diff(lag=7) %>%ggtsdisplay()
+td.ts %>% diff(lag=7) %>% diff()%>%ggtsdisplay()
+acf(diff(td.ts))
+
+```
+
+```{r}
+#fit model
+sarima(td.ts,4,1,3,1,1,1,7)
+sarima(td.ts,4,1,1,1,1,1,7)
+
+
+
+```
+
+
+```{R}
+
+
+model_smry<-data.frame()
+#begin for loop to try different combinations
+for (p in 1:6){
+  for (q in 1:6){
+    for (d in 1:2){
+      fit<-arima(td.ts, order = c(p,d,q),seasonal = list(order=c(1,1,1), period=7) )
+      acc<-accuracy(fit)
+      acc_ext<-data.frame(p,d,q, AIC=AIC(fit), BIC=BIC(fit))
+      model_smry<-rbind(model_smry, acc_ext)
+    }
+  }
+}
+model_smry%>% 
+  filter(d==1)%>%
+  mutate(summ=p+d+q)%>%
+  filter(summ<=8)%>%
+  arrange(AIC)
+
+
+
+
+```
+
+
+```{r}
+
+fit<-arima(td.ts, order = c(4,1,1),seasonal = list(order=c(1,1,1), period=7) )
+res.arima1<-fit$res
+acf(res.arima1)
+pacf(res.arima1)
+sarima(res.arima1, 9,0,0)
+```
+
+
+```{r}
+
+autoplot(forecast(fit,100), PI=T, seris='dfd')+geom_line()+ylab('Hospital Critical Staff Shortages (Texas)')+ xlab('')
+
+```
+
+
+```{r}
+
+#mean
+f1<-meanf(td.ts, h=100)
+#naive
+f2 <- naive(td.ts, h=100)
+
+#Drift
+f3 <- rwf(td.ts, h=100, drift = TRUE)
+
+
+#seasonal naive
+f4<-snaive(td.ts, h=100)
+
+
+```
+
+```{r}
+
+pred=forecast(fit,100)
+autoplot(pred$mean)
+summary(pred)
+
+```
+
+
+```{R}
+autoplot(td.ts)+autolayer(pred$mean, PI=FALSE, series='SARIMA(4,1,1,1,1,1)7') + autolayer(meanf(td.ts, h=100),
+series="Mean", PI=FALSE) + autolayer(naive(td.ts, h=100),
+series="Naïve", PI=FALSE) + autolayer(rwf(td.ts, drift=TRUE, h=100),
+series="Drift", PI=FALSE) + autolayer(snaive(td.ts, h=100), PI=FALSE, series='Seasonal Naïve')+
+ggtitle("Texas Hospital Critical Staff Shortages\n(daily ending 8 Feb 2022)") + xlab("") + ylab("Hospital Critical Staff Shortages (Texas)") + guides(colour=guide_legend(title="Forecast"))
+
+```
+
+
+
+
+# Financial Time Series
+
+```{r, message=FALSE, warning=FALSE}
+#install.packages("grDevices")
+#library(grDevices)
+library(fGarch) 
+library(tseries)
+library(astsa) 
+library(xts)
+library(fpp)
+library(astsa)
+library(ggplot2)
+library(tidyverse)
+
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+
+library(quantmod)
+getSymbols("PFE", from="2022-02-01", src="yahoo")
+head(`PFE`)
+autoplot(PFE$PFE.Adjusted, main='Pfizer Adjusted Price Feb-March 2022', xlab='')
+```
+
+
+
+```{r}
+
+#candlestick plot of prices 
+chartSeries(`PFE`, type="candlesticks", theme="white")
+
+#plot returns 
+head(btc.close<- Ad(`PFE`),na.action = na.omit)
+returns = diff(log(btc.close))
+chartSeries(returns, theme="white")
+
+```
+
+
+
+```{r}
+
+#acf of return 
+acf(returns, na.action = na.pass, lag.max = 100)
+acf(abs(returns), na.action = na.pass, lag.max = 100)
+acf((returns)^2, na.action = na.pass, lag.max = 100)
+
+
+#pacf of returns
+pacf(returns, na.action = na.pass, lag.max = 100)
+pacf(abs(returns), na.action = na.pass, lag.max = 100)
+pacf((returns)^2, na.action = na.pass, lag.max = 100)
+
+
+```
+
+```{r}
+library(fGarch)
+x<-garchFit(~garch(3,0), na.remove(returns))
+y<-garchFit(~garch(4,0), na.remove(returns))
+
+
+```
+
+```{r}
+autoplot(as.ts(x@residuals))
+
+```
+
+
+```{r}
+
+
+model_smry<-data.frame()
+#begin for loop to try different combinations
+for (p in 1:2){
+  for (q in 0:4){
+    for (d in 0:1){
+      fit<-arima(returns, order = c(p,d,q))
+      acc<-accuracy(fit)
+      acc_ext<-data.frame(p,d,q, AIC=AIC(fit), BIC=BIC(fit))
+      model_smry<-rbind(model_smry, acc_ext)
+    }
+  }
+}
+model_smry
+
+
+
+```
+
+```{r}
+
+fit2<-arima(returns, order=c(2,0,0))
+sarima(na.omit(returns), 2,0,0)
+
+
+```
+
+```{r}
+
+res.arima1=fit2$res
+squared.res.arima1=res.arima1^2
+
+
+#par(mfcol=c(3,1))
+plot(squared.res.arima1,main='Squared Residuals')
+acf.squared1=acf(squared.res.arima1,main='ACF Squared Residuals',lag.max=100, na.action = na.omit)
+pacf.squared1=pacf(squared.res.arima1,main='PACF Squared Residuals',lag.max=100, na.action = na.omit)
+
+
+
+
+```
+
+```{r}
+
+acf((returns)^2, na.action = na.pass, lag.max=100)
+pacf((returns)^2, na.action = na.pass, lag.max=100)
+acf(abs(returns), na.action = na.pass, lag.max=100)
+pacf(abs(returns), na.action = na.pass, lag.max=100)
+
+
+```
+
+```{r}
+
+library(FinTS)
+byd.archTest <- ArchTest(returns, lags = 1, demean = TRUE)
+byd.archTest
+```
+
+
+There are no ARCH effects. 
+
+```{r}
+x<-garchFit(~garch(3,0), na.remove(returns))
+#summary(garch(na.remove(returns),order=c(0,3),trace=F))
+x@fit$coef
+
+```
+$\delta=-0.0027936332$
+$var(y_{t}|y_{t-1})=\sigma^2=0.0001373019+0.0000000100y^2_{t-1}+0.0411269692y^2_{t-2}+0.4902650183y^2_{t-3}$
+
+
+### Seasonal cross validation
+
+```{r}
+autoplot(td.ts)
+```
+
+
+
+```{r}
+k <- 48 # minimum data length for fitting a model (4 seasonal lags)
+n <- length(td.ts) #144
+n-k #96
+mae1 <- matrix(NA,n-k,7)
+mae2 <- matrix(NA,n-k,7)
+
+
+st <- tsp(td.ts)[1]+(k-2)/7 #ending point 
+#tsp=time series period
+
+a0 <- window(td.ts, st=tsp(td.ts)[1],end=st )
+a0
+```
+
+```{r}
+k <- 75 # minimum data length for fitting a model 
+n <- length(td.ts)
+n-k 
+for(i in 1:(n-k))
+{
+  xtrain <- td.ts[1:(k-1)+i]
+  xtest <- td.ts[k+i]
+  
+  fit <- Arima(xtrain, order=c(4,1,1), seasonal = list(order=c(1,1,1), period=7))
+  fcast1 <- forecast(fit, h=1)
+  
+  fit2 <- Arima(xtrain, order=c(4,1,2), seasonal = list(order=c(1,1,1), period=7))
+  fcast2 <- forecast(fit2, h=1)
+  
+  
+  err1 = c(err1, abs(fcast1$mean-xtest))
+  err2 = c(err2, abs(fcast2$mean-xtest))
+  
+}
+
+mean(err1) 
+
+```
+
+
+```{r}
+
+farima1 <- function(td.ts, h){forecast(Arima(td.ts, order=c(4,1,1), seasonal = list(order=c(1,1,1), period=7)), h=h)}
+e <- tsCV(td.ts, farima1, h=7)
+length(e)
+```
+
+
+```{R}
+
+
+# Compute the MSE values and remove missing values
+df<-data.frame(e=c(e), time=c(time(e)))
+mse <- colMeans(df, na.rm = TRUE)
+
+# Plot the MSE values against the forecast horizon
+data.frame(h = 0:7, MSE = mse) %>%
+  ggplot(aes(x = h, y = MSE)) + geom_point()+labs(title = 'Seven-step ahead')
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
